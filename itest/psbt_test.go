@@ -6,9 +6,13 @@ import (
 	"encoding/base64"
 	"testing"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
+	"github.com/lightninglabs/lndclient"
 	tap "github.com/lightninglabs/taproot-assets"
 	"github.com/lightninglabs/taproot-assets/address"
 	"github.com/lightninglabs/taproot-assets/asset"
@@ -22,6 +26,222 @@ import (
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/stretchr/testify/require"
 )
+
+// testPsbtScriptHashLockSend tests that we can properly send assets with a hash
+// lock back and forth between nodes with the use of PSBTs.
+func testMusig2Spend(t *harnessTest) {
+	// First, we'll make a normal asset with enough units to allow us to
+	// send it around a few times.
+	rpcAssets := mintAssetsConfirmBatch(
+		t, t.tapd, []*mintrpc.MintAssetRequest{simpleAssets[0]},
+	)
+
+	//mintedAsset := rpcAssets[0]
+	genInfo := rpcAssets[0].AssetGenesis
+
+	ctxb := context.Background()
+	ctxt, cancel := context.WithTimeout(ctxb, defaultWaitTimeout)
+	defer cancel()
+
+	// Now that we have the asset created, we'll make a new node that'll
+	// serve as the node which'll receive the assets.
+	secondTapd := setupTapdHarness(
+		t.t, t, t.lndHarness.Bob, t.universeServer,
+		func(params *tapdHarnessParams) {
+			params.startupSyncNode = t.tapd
+			params.startupSyncNumAssets = len(rpcAssets)
+		},
+	)
+	defer func() {
+		require.NoError(t.t, secondTapd.stop(!*noDelete))
+	}()
+
+	var (
+		alice    = t.tapd
+		bob      = secondTapd
+		numUnits = uint64(10)
+	)
+
+	// We need to derive keys for alice and bob in order to construct
+	// the musig2 pubkey.
+	alicePrivkey, err := btcec.NewPrivateKey()
+	require.NoError(t.t, err)
+	bobPrivkey, err := btcec.NewPrivateKey()
+	require.NoError(t.t, err)
+
+	aliceContext, err := musig2.NewContext(
+		alicePrivkey, true, musig2.WithNumSigners(2),
+	)
+	require.NoError(t.t, err)
+
+	haveAllSigners, err := aliceContext.RegisterSigner(bobPrivkey.PubKey())
+	require.NoError(t.t, err)
+	require.True(t.t, haveAllSigners)
+
+	bobContext, err := musig2.NewContext(
+		bobPrivkey, true, musig2.WithNumSigners(2),
+	)
+
+	require.NoError(t.t, err)
+
+	haveAllSigners, err = bobContext.RegisterSigner(bobPrivkey.PubKey())
+	require.NoError(t.t, err)
+	require.True(t.t, haveAllSigners)
+
+	combinedKey, err := aliceContext.CombinedKey()
+	require.NoError(t.t, err)
+
+	schnorKey := schnorr.SerializePubKey(combinedKey)
+	// tapscript := input.TapscriptFullKeyOnly(
+	// 	combinedKey,
+	// )
+
+	musig2Addr, err := bob.NewAddr(ctxt, &taprpc.NewAddrRequest{
+		AssetId: genInfo.AssetId,
+		Amt:     numUnits,
+		ScriptKey: &taprpc.ScriptKey{
+			PubKey: schnorKey,
+			KeyDesc: &taprpc.KeyDescriptor{
+				RawKeyBytes: combinedKey.SerializeUncompressed(),
+			},
+		},
+		InternalKey: &taprpc.KeyDescriptor{
+			RawKeyBytes: combinedKey.SerializeUncompressed(),
+		},
+	})
+	require.NoError(t.t, err)
+
+	res, err := alice.SendAsset(ctxt, &taprpc.SendAssetRequest{
+		TapAddrs: []string{musig2Addr.Encoded},
+	})
+	require.NoError(t.t, err)
+
+	t.Logf("SendAsset response: %v", res)
+
+	aliceAddr, err := alice.NewAddr(ctxt, &taprpc.NewAddrRequest{
+		Amt:     numUnits,
+		AssetId: genInfo.AssetId,
+	})
+	require.NoError(t.t, err)
+
+	fundResp := fundAddressSendPacket(t, bob, aliceAddr)
+
+	fundedPacket, err := tappsbt.NewFromRawBytes(
+		bytes.NewReader(fundResp.FundedPsbt), false,
+	)
+	require.NoError(t.t, err)
+
+	//
+	aliceSession, err := aliceContext.NewSession()
+	require.NoError(t.t, err)
+
+	bobSession, err := bobContext.NewSession()
+	require.NoError(t.t, err)
+
+	allNonces, err := aliceSession.RegisterPubNonce(bobSession.PublicNonce())
+	require.NoError(t.t, err)
+	require.True(t.t, allNonces)
+
+	allNonces, err = bobSession.RegisterPubNonce(bobSession.PublicNonce())
+	require.NoError(t.t, err)
+	require.True(t.t, allNonces)
+
+	//tapscript.SignVirtualTransaction(fundedPacket, signer Signer, validator TxValidator)
+
+	// We don't need to sign anything as we're going to spend with a
+	// pre-image to the script lock.
+	//controlBlockBytes, err := tapscript.ControlBlock.ToBytes()
+	require.NoError(t.t, err)
+	senderOut := fundedPacket.Outputs[0].Asset
+	senderOut.PrevWitnesses[0].TxWitness = [][]byte{}
+
+	var b bytes.Buffer
+	err = fundedPacket.Serialize(&b)
+	require.NoError(t.t, err)
+
+	// Now we'll attempt to complete the transfer.
+	sendResp, err := bob.AnchorVirtualPsbts(
+		ctxb, &wrpc.AnchorVirtualPsbtsRequest{
+			VirtualPsbts: [][]byte{b.Bytes()},
+		},
+	)
+	require.NoError(t.t, err)
+
+	// Send the asset to Bob using the script key with an actual script
+	// tree.
+	//_ = sendAssetsToAddr(t, alice, musig2Addr)
+
+	// changeUnits := mintedAsset.Amount - numUnits
+	// confirmAndAssertOutboundTransfer(
+	// 	t, alice, sendResp, genInfo.AssetId,
+	// 	[]uint64{changeUnits, numUnits}, 0, 1,
+	// )
+	// _ = sendProof(t, alice, bob, bobAddr.ScriptKey, genInfo)
+	// assertNonInteractiveRecvComplete(t, bob, 1)
+	// // Now try to send back those assets using the PSBT flow.
+	// aliceAddr, err := alice.NewAddr(ctxb, &taprpc.NewAddrRequest{
+	// 	AssetId: genInfo.AssetId,
+	// 	Amt:     numUnits / 2,
+	// })
+	// require.NoError(t.t, err)
+	// assertAddrCreated(t.t, alice, rpcAssets[0], aliceAddr)
+
+	// fundResp := fundAddressSendPacket(t, bob, aliceAddr)
+	// t.Logf("Funded PSBT: %v",
+	// 	base64.StdEncoding.EncodeToString(fundResp.FundedPsbt))
+
+	// fundedPacket, err := tappsbt.NewFromRawBytes(
+	// 	bytes.NewReader(fundResp.FundedPsbt), false,
+	// )
+	// require.NoError(t.t, err)
+
+	// // We don't need to sign anything as we're going to spend with a
+	// // pre-image to the script lock.
+	// controlBlockBytes, err := tapscript.ControlBlock.ToBytes()
+	// require.NoError(t.t, err)
+	// senderOut := fundedPacket.Outputs[0].Asset
+	// senderOut.PrevWitnesses[0].TxWitness = [][]byte{
+	// 	preImage, leaf1.Script, controlBlockBytes,
+	// }
+
+	// for idx := range fundedPacket.Outputs {
+	// 	out := fundedPacket.Outputs[idx]
+	// 	splitAsset := out.Asset
+
+	// 	if out.Type.IsSplitRoot() {
+	// 		splitAsset = out.SplitAsset
+	// 	}
+
+	// 	splitCommitment := splitAsset.PrevWitnesses[0].SplitCommitment
+	// 	splitCommitment.RootAsset = *senderOut.Copy()
+	// }
+
+	// confirmAndAssertOutboundTransfer(
+	// 	t, bob, sendResp, genInfo.AssetId,
+	// 	[]uint64{numUnits / 2, numUnits / 2}, 0, 1,
+	// )
+	// _ = sendProof(t, bob, alice, aliceAddr.ScriptKey, genInfo)
+	// assertNonInteractiveRecvComplete(t, alice, 1)
+
+	// aliceAssets, err := alice.ListAssets(ctxb, &taprpc.ListAssetRequest{
+	// 	WithWitness: true,
+	// })
+	// require.NoError(t.t, err)
+
+	// assetsJSON, err := formatProtoJSON(aliceAssets)
+	// require.NoError(t.t, err)
+	// t.Logf("Got alice assets: %s", assetsJSON)
+}
+
+type Musig2Signer struct {
+	aliceCtx musig2.Session
+	bobCtx   musig2.Session
+}
+
+func (mu *Musig2Signer) SignVirtualTx(signDesc *lndclient.SignDescriptor, tx *wire.MsgTx,
+	prevOut *wire.TxOut) (*schnorr.Signature, error) {
+
+}
 
 // testPsbtScriptHashLockSend tests that we can properly send assets with a hash
 // lock back and forth between nodes with the use of PSBTs.
