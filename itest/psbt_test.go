@@ -2003,6 +2003,8 @@ func finalizePacket(t *testing.T, lnd *node.HarnessNode,
 	)
 	require.NoError(t, err)
 
+	require.True(t, signedPacket.IsComplete())
+
 	return signedPacket
 }
 
