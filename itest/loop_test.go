@@ -7,15 +7,15 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
-	"github.com/lightninglabs/loop/swap"
 	tap "github.com/lightninglabs/taproot-assets"
 	"github.com/lightninglabs/taproot-assets/address"
 	"github.com/lightninglabs/taproot-assets/asset"
+	"github.com/lightninglabs/taproot-assets/commitment"
 	"github.com/lightninglabs/taproot-assets/fn"
 	"github.com/lightninglabs/taproot-assets/tappsbt"
 	"github.com/lightninglabs/taproot-assets/taprpc"
@@ -69,33 +69,54 @@ func testLoopSwap(t *harnessTest) {
 	blockRes := aliceLnd.RPC.GetBestBlock(&chainrpc.GetBestBlockRequest{})
 
 	var (
-		alicePk  = pubkeyTo33Byte(aliceInternalKey.PubKey)
-		bobPk    = pubkeyTo33Byte(bobInternalKey.PubKey)
 		preimage = makeLndPreimage(t.t)
 		hash     = preimage.Hash()
 	)
 
 	// Create the loop htlc.
-	htlc, err := swap.NewHtlcV3(
-		input.MuSig2Version100RC2, blockRes.BlockHeight+100,
-		alicePk, bobPk, alicePk, bobPk, hash,
-		&chaincfg.RegressionNetParams,
+	successPathScript, err := GenSuccessPathScript(bobInternalKey.PubKey, hash)
+	require.NoError(t.t, err)
+
+	timeoutPathScript, err := GenTimeoutPathScript(aliceInternalKey.PubKey, int64(blockRes.BlockHeight+100))
+	require.NoError(t.t, err)
+
+	// Assemble our taproot script tree from our leaves.
+	branch := txscript.NewTapBranch(
+		txscript.NewBaseTapLeaf(successPathScript),
+		txscript.NewBaseTapLeaf(timeoutPathScript),
+	)
+	siblingPreimage := commitment.NewPreimageFromBranch(branch)
+	siblingPreimageBytes, _, err := commitment.MaybeEncodeTapscriptPreimage(
+		&siblingPreimage,
 	)
 	require.NoError(t.t, err)
 
-	htlcv3 := htlc.HtlcScript.(*swap.HtlcScriptV3)
+	// Calculate the internal aggregate key.
+	aggregateKey, err := input.MuSig2CombineKeys(
+		input.MuSig2Version100RC2,
+		[]*btcec.PublicKey{
+			aliceInternalKey.PubKey, bobInternalKey.PubKey,
+		},
+		true,
+		&input.MuSig2Tweaks{
+			TaprootBIP0086Tweak: true,
+		},
+	)
+	require.NoError(t.t, err)
 
 	const assetsToSend = 1000
 	tapScriptKey, _, _, _ := createOpTrueLeaf(
 		t.t,
 	)
+
 	tapdAddr, err := bobTapd.NewAddr(ctxt, &taprpc.NewAddrRequest{
 		AssetId:   firstBatchGenesis.AssetId,
 		Amt:       assetsToSend,
 		ScriptKey: tap.MarshalScriptKey(tapScriptKey),
 		InternalKey: &taprpc.KeyDescriptor{
-			RawKeyBytes: pubKeyBytes(htlcv3.TaprootKey),
+			RawKeyBytes: pubKeyBytes(aggregateKey.PreTweakedKey),
 		},
+		TapscriptSibling: siblingPreimageBytes[:],
 	})
 	require.NoError(t.t, err)
 
@@ -180,87 +201,28 @@ func testLoopSwap(t *harnessTest) {
 	)
 	require.NoError(t.t, err)
 
-	// for idx, tx := range newBlock.Transactions {
-	// 	for outputIdx, output := range tx.TxOut {
-	// 		t.Logf("tx %v, output %v: %x, %v", idx, outputIdx, output.PkScript, output.Value)
-	// 	}
-	// }
-	for idx, input := range btcWithdrawPkt.Inputs {
-		t.Logf("Input: %v, %x, %v", idx, input.WitnessUtxo.PkScript, input.WitnessUtxo.Value)
-	}
-	for idx, output := range btcWithdrawPkt.UnsignedTx.TxOut {
-		t.Logf("output: %v, %v", idx, output.Value)
-	}
-
-	// /newRootHash := sendResp.Transfer.Outputs[1].Anchor.TaprootAssetRoot
+	newRootHash := sendResp.Transfer.Outputs[1].Anchor.TaprootAssetRoot
 
 	// We now get the the signature for the anchor tx.
 	sig := signMusig2Psbt(
 		t.t, ctxt, aliceLnd, bobLnd, aliceInternalKey, bobInternalKey,
-		btcWithdrawPkt.UnsignedTx, htlcv3.RootHash[:], newBlock.Transactions[1].TxOut[1],
+		btcWithdrawPkt.UnsignedTx, newRootHash, newBlock.Transactions[1].TxOut[1],
 	)
 
-	btcWithdrawPkt.Inputs[0].TaprootKeySpendSig = sig
-	// t.Logf("Witness: %x length: %v", sig, len(sig))
-	// btcWithdrawPkt.UnsignedTx.TxIn[0].Witness = wire.TxWitness{
-	// 	sig,
-	// }
+	txWitness := wire.TxWitness{
+		sig,
+	}
+	var buf2 bytes.Buffer
+	err = psbt.WriteTxWitness(&buf2, txWitness)
+	require.NoError(t.t, err)
+
+	btcWithdrawPkt.Inputs[0].FinalScriptWitness = buf2.Bytes()
 
 	// Finalize the packet.
-	buf = bytes.Buffer{}
-	err = btcWithdrawPkt.Serialize(&buf)
-	require.NoError(t.t, err)
-
-	signRes, err := bobLnd.RPC.WalletKit.SignPsbt(
-		ctxt, &walletrpc.SignPsbtRequest{
-			FundedPsbt: buf.Bytes(),
-		},
-	)
-	require.NoError(t.t, err)
-
-	for _, input := range signRes.SignedInputs {
-		t.Logf("Signed input: %v ", input)
-	}
-
-	newPsbt, err := psbt.NewFromRawBytes(
-		bytes.NewReader(signRes.SignedPsbt), false,
-	)
-	require.NoError(t.t, err)
-
-	t.Logf("new psbt: %v, ", newPsbt.IsComplete())
-	// for idx, input := range newPsbt.UnsignedTx.TxIn {
-	// 	t.Logf("Input %v: %x, size: %v", idx, input.Witness, len(input.Witness))
-	// }
-
-	for idx, input := range newPsbt.Inputs {
-		t.Logf("1 Input %v: %x, size: %v", idx, input.FinalScriptWitness, len(input.FinalScriptWitness))
-	}
-	err = psbt.MaybeFinalizeAll(newPsbt)
-	require.NoError(t.t, err)
-	require.True(t.t, newPsbt.IsComplete())
-
-	for idx, input := range newPsbt.Inputs {
-		t.Logf("2 Input %v: %x, size: %v", idx, input.FinalScriptWitness, len(input.FinalScriptWitness))
-	}
-	finalTx := newPsbt.UnsignedTx.Copy()
-	for i, tin := range finalTx.TxIn {
-		t.Logf("3 Input %v: %x, size: %v", i, tin.Witness, len(tin.Witness))
-	}
-
-	// finalizeRes, err := bobLnd.RPC.WalletKit.FinalizePsbt(
-	// 	ctxt, &walletrpc.FinalizePsbtRequest{
-	// 		FundedPsbt: signRes.SignedPsbt,
-	// 	},
-	// )
-	// require.NoError(t.t, err)
-
-	// signedPacket, err := psbt.NewFromRawBytes(
-	// 	bytes.NewReader(newPsbt), false,
-	// )
-	// require.NoError(t.t, err)
+	signedPkt := finalizePacket(t.t, bobLnd, btcWithdrawPkt)
 
 	logResp := logAndPublish(
-		t.t, bobTapd, newPsbt, finalizedWithdrawPackets, nil,
+		t.t, bobTapd, signedPkt, finalizedWithdrawPackets, nil,
 		commitResp,
 	)
 
@@ -287,7 +249,7 @@ func signMusig2Psbt(t *testing.T, ctx context.Context, aliceLnd, bobLnd *node.Ha
 			},
 			AllSignerPubkeys: signers,
 			TaprootTweak: &signrpc.TaprootTweakDesc{
-				ScriptRoot: rootHash,
+				KeySpendOnly: true,
 			},
 		},
 	)
@@ -302,7 +264,7 @@ func signMusig2Psbt(t *testing.T, ctx context.Context, aliceLnd, bobLnd *node.Ha
 			},
 			AllSignerPubkeys: signers,
 			TaprootTweak: &signrpc.TaprootTweakDesc{
-				ScriptRoot: rootHash,
+				KeySpendOnly: true,
 			},
 		},
 	)
@@ -461,4 +423,38 @@ func partialSignWithKeyTopLevel(t *testing.T, lnd *node.HarnessNode, pkt *psbt.P
 	require.Contains(t, resp.SignedInputs, inputIndex)
 
 	return result.Inputs[inputIndex].TaprootScriptSpendSig[0].Signature
+}
+
+func GenSuccessPathScript(receiverHtlcKey *btcec.PublicKey,
+	swapHash lntypes.Hash) ([]byte, error) {
+
+	builder := txscript.NewScriptBuilder()
+
+	builder.AddData(schnorr.SerializePubKey(receiverHtlcKey))
+	builder.AddOp(txscript.OP_CHECKSIGVERIFY)
+	builder.AddOp(txscript.OP_SIZE)
+	builder.AddInt64(32)
+	builder.AddOp(txscript.OP_EQUALVERIFY)
+	builder.AddOp(txscript.OP_HASH160)
+	builder.AddData(input.Ripemd160H(swapHash[:]))
+	builder.AddOp(txscript.OP_EQUALVERIFY)
+	builder.AddInt64(1)
+	builder.AddOp(txscript.OP_CHECKSEQUENCEVERIFY)
+
+	return builder.Script()
+}
+
+// GenTimeoutPathScript constructs an HtlcScript for the timeout payment path.
+// Largest possible bytesize of the script is 32 + 1 + 2 + 1 = 36.
+//
+//	<senderHtlcKey> OP_CHECKSIGVERIFY <cltvExpiry> OP_CHECKLOCKTIMEVERIFY
+func GenTimeoutPathScript(senderHtlcKey *btcec.PublicKey, cltvExpiry int64) (
+	[]byte, error) {
+
+	builder := txscript.NewScriptBuilder()
+	builder.AddData(schnorr.SerializePubKey(senderHtlcKey))
+	builder.AddOp(txscript.OP_CHECKSIGVERIFY)
+	builder.AddInt64(cltvExpiry)
+	builder.AddOp(txscript.OP_CHECKLOCKTIMEVERIFY)
+	return builder.Script()
 }
