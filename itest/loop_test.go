@@ -13,7 +13,6 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	tap "github.com/lightninglabs/taproot-assets"
-	"github.com/lightninglabs/taproot-assets/address"
 	"github.com/lightninglabs/taproot-assets/asset"
 	"github.com/lightninglabs/taproot-assets/commitment"
 	"github.com/lightninglabs/taproot-assets/fn"
@@ -74,23 +73,17 @@ func testLoopSwap(t *harnessTest) {
 	)
 
 	// Create the loop htlc.
-	successPathScript, err := GenSuccessPathScript(bobInternalKey.PubKey, hash)
+	successPathScript, err := GenSuccessPathScript(
+		bobInternalKey.PubKey, hash,
+	)
 	require.NoError(t.t, err)
 
-	timeoutPathScript, err := GenTimeoutPathScript(aliceInternalKey.PubKey, int64(blockRes.BlockHeight+100))
+	timeoutPathScript, err := GenTimeoutPathScript(
+		aliceInternalKey.PubKey, int64(blockRes.BlockHeight+100),
+	)
 	require.NoError(t.t, err)
 
 	// Assemble our taproot script tree from our leaves.
-	branch := txscript.NewTapBranch(
-		txscript.NewBaseTapLeaf(successPathScript),
-		txscript.NewBaseTapLeaf(timeoutPathScript),
-	)
-	siblingPreimage := commitment.NewPreimageFromBranch(branch)
-	siblingPreimageBytes, _, err := commitment.MaybeEncodeTapscriptPreimage(
-		&siblingPreimage,
-	)
-	require.NoError(t.t, err)
-
 	// Calculate the internal aggregate key.
 	aggregateKey, err := input.MuSig2CombineKeys(
 		input.MuSig2Version100RC2,
@@ -98,23 +91,36 @@ func testLoopSwap(t *harnessTest) {
 			aliceInternalKey.PubKey, bobInternalKey.PubKey,
 		},
 		true,
-		&input.MuSig2Tweaks{
-			TaprootBIP0086Tweak: true,
-		},
+		&input.MuSig2Tweaks{},
+	)
+	require.NoError(t.t, err)
+
+	btcInternalKey := aggregateKey.PreTweakedKey
+	btcControlBlock := &txscript.ControlBlock{
+		LeafVersion: txscript.BaseLeafVersion,
+		InternalKey: btcInternalKey,
+	}
+
+	timeoutLeaf := txscript.NewBaseTapLeaf(timeoutPathScript)
+	branch := txscript.NewTapBranch(
+		txscript.NewBaseTapLeaf(successPathScript),
+		timeoutLeaf,
+	)
+	siblingPreimage := commitment.NewPreimageFromBranch(branch)
+	siblingPreimageBytes, _, err := commitment.MaybeEncodeTapscriptPreimage(
+		&siblingPreimage,
 	)
 	require.NoError(t.t, err)
 
 	const assetsToSend = 1000
-	tapScriptKey, _, _, _ := createOpTrueLeaf(
-		t.t,
-	)
+	tapScriptKey, _, _, _ := createOpTrueLeaf(t.t)
 
 	tapdAddr, err := bobTapd.NewAddr(ctxt, &taprpc.NewAddrRequest{
 		AssetId:   firstBatchGenesis.AssetId,
 		Amt:       assetsToSend,
 		ScriptKey: tap.MarshalScriptKey(tapScriptKey),
 		InternalKey: &taprpc.KeyDescriptor{
-			RawKeyBytes: pubKeyBytes(aggregateKey.PreTweakedKey),
+			RawKeyBytes: pubKeyBytes(btcInternalKey),
 		},
 		TapscriptSibling: siblingPreimageBytes[:],
 	})
@@ -129,11 +135,31 @@ func testLoopSwap(t *harnessTest) {
 
 	t.Logf("Initial transaction: %v", toJSON(t.t, sendResp))
 
+	// By anchoring the virtual transaction, we can now learn the asset
+	// commitment root which we'll need to include in the control block to
+	// be able to spend the tapscript path later. The convention is that the
+	// change output of a virtual transaction is always at index 0. So our
+	// address output should be at index 1.
+	multiSigOutAnchor := sendResp.Transfer.Outputs[1].Anchor
+	timeoutLeafHash := timeoutLeaf.TapHash()
+	btcControlBlock.InclusionProof = append(
+		timeoutLeafHash[:], multiSigOutAnchor.TaprootAssetRoot[:]...)
+
+	rootHash := btcControlBlock.RootHash(successPathScript)
+	tapKey := txscript.ComputeTaprootOutputKey(btcInternalKey, rootHash)
+
+	if tapKey.SerializeCompressed()[0] ==
+		secp256k1.PubKeyFormatCompressedOdd {
+
+		btcControlBlock.OutputKeyYIsOdd = true
+	}
+	require.Equal(t.t, rootHash[:], multiSigOutAnchor.MerkleRoot)
+
 	// Let's mine a transaction to make sure the transfer completes.
 	expectedAmounts := []uint64{
 		firstBatch.Amount - assetsToSend, assetsToSend,
 	}
-	newBlock := ConfirmAndAssertOutboundTransferWithOutputs(
+	ConfirmAndAssertOutboundTransferWithOutputs(
 		t.t, t.lndHarness.Miner.Client, aliceTapd,
 		sendResp, firstBatchGenesis.AssetId, expectedAmounts,
 		0, 1, len(expectedAmounts),
@@ -146,32 +172,26 @@ func testLoopSwap(t *harnessTest) {
 		t.t, bobTapd, firstBatchGenesis.AssetId, assetsToSend,
 	)
 
-	var id [32]byte
-	copy(id[:], firstBatchGenesis.AssetId)
-	receiverScriptKey, receiverAnchorIntKeyDesc := deriveKeys(
-		t.t, bobTapd,
-	)
-
-	// We're building the virtual sweep transaction, by specifiying an
-	// output to send funds to. We're not specifying the sweep as an input
-	// here.
-	vPkt := tappsbt.ForInteractiveSend(
-		id, assetsToSend, receiverScriptKey, 0,
-		receiverAnchorIntKeyDesc, asset.V0,
-		&address.RegressionNetTap,
-	)
-
-	var buf bytes.Buffer
-	err = vPkt.Serialize(&buf)
+	// We have now stored our assets in a double-multisig protected TAP
+	// address. Let's now try to spend them back to Alice. Let's create a
+	// virtual transaction that sends half of the assets back to Alice.
+	withdrawAddr, err := bobTapd.NewAddr(ctxt, &taprpc.NewAddrRequest{
+		AssetId: firstBatchGenesis.AssetId,
+		Amt:     assetsToSend,
+	})
 	require.NoError(t.t, err)
 
-	// Bob's tapd will now fund the virtual transaction. As bob's wallet
-	// only contains the locked sweep, it will fund the vpsbt with the
-	// sweep.
+	// We fund this withdrawal transaction from Bob's tapd which only has
+	// the multisig locked assets currently.
+	withdrawRecipients := map[string]uint64{
+		withdrawAddr.Encoded: withdrawAddr.Amount,
+	}
 	withdrawFundResp, err := bobTapd.FundVirtualPsbt(
 		ctxt, &wrpc.FundVirtualPsbtRequest{
-			Template: &wrpc.FundVirtualPsbtRequest_Psbt{
-				Psbt: buf.Bytes(),
+			Template: &wrpc.FundVirtualPsbtRequest_Raw{
+				Raw: &wrpc.TxTemplate{
+					Recipients: withdrawRecipients,
+				},
 			},
 		},
 	)
@@ -201,21 +221,34 @@ func testLoopSwap(t *harnessTest) {
 	)
 	require.NoError(t.t, err)
 
-	newRootHash := sendResp.Transfer.Outputs[1].Anchor.TaprootAssetRoot
+	//newRootHash := sendResp.Transfer.Outputs[1].Anchor.TaprootAssetRoot
 
 	// We now get the the signature for the anchor tx.
-	sig := signMusig2Psbt(
-		t.t, ctxt, aliceLnd, bobLnd, aliceInternalKey, bobInternalKey,
-		btcWithdrawPkt.UnsignedTx, newRootHash, newBlock.Transactions[1].TxOut[1],
+	// sig := signMusig2Psbt(
+	// 	t.t, ctxt, aliceLnd, bobLnd, aliceInternalKey, bobInternalKey,
+	// 	btcWithdrawPkt.UnsignedTx, newRootHash, newBlock.Transactions[1].TxOut[1],
+	// )
+
+	feeTxOut := &wire.TxOut{
+		PkScript: btcWithdrawPkt.Inputs[1].WitnessUtxo.PkScript,
+		Value:    btcWithdrawPkt.Inputs[1].WitnessUtxo.Value,
+	}
+
+	assetTxOut := &wire.TxOut{
+		PkScript: btcWithdrawPkt.Inputs[0].WitnessUtxo.PkScript,
+		Value:    btcWithdrawPkt.Inputs[0].WitnessUtxo.Value,
+	}
+
+	btcWithdrawPkt.UnsignedTx.TxIn[0].Sequence = 1
+	txWitness := genSuccessWitness(
+		t.t, bobLnd, *btcControlBlock, preimage, successPathScript,
+		btcWithdrawPkt.UnsignedTx, bobInternalKey, assetTxOut, feeTxOut,
 	)
 
-	txWitness := wire.TxWitness{
-		sig,
-	}
 	var buf2 bytes.Buffer
 	err = psbt.WriteTxWitness(&buf2, txWitness)
 	require.NoError(t.t, err)
-
+	btcWithdrawPkt.Inputs[0].SighashType = txscript.SigHashDefault
 	btcWithdrawPkt.Inputs[0].FinalScriptWitness = buf2.Bytes()
 
 	// Finalize the packet.
@@ -230,6 +263,12 @@ func testLoopSwap(t *harnessTest) {
 
 	// Mine a block to confirm the transfer.
 	MineBlocks(t.t, t.lndHarness.Miner.Client, 1, 1)
+
+	AssertAddrEvent(t.t, bobTapd, withdrawAddr, 1, statusCompleted)
+	AssertBalanceByID(
+		t.t, bobTapd, firstBatchGenesis.AssetId,
+		assetsToSend,
+	)
 }
 
 func signMusig2Psbt(t *testing.T, ctx context.Context, aliceLnd, bobLnd *node.HarnessNode,
@@ -457,4 +496,59 @@ func GenTimeoutPathScript(senderHtlcKey *btcec.PublicKey, cltvExpiry int64) (
 	builder.AddInt64(cltvExpiry)
 	builder.AddOp(txscript.OP_CHECKLOCKTIMEVERIFY)
 	return builder.Script()
+}
+
+// genSuccessWitness returns the success script to spend this htlc with
+// the preimage.
+func genSuccessWitness(t *testing.T, lnd *node.HarnessNode,
+	controlBlock txscript.ControlBlock, preimage lntypes.Preimage,
+	successScript []byte, tx *wire.MsgTx, keyDesc keychain.KeyDescriptor,
+	assetTxOut *wire.TxOut, feeInputTxOut *wire.TxOut) wire.TxWitness {
+
+	var buf bytes.Buffer
+	err := tx.Serialize(&buf)
+	require.NoError(t, err)
+
+	assetSignTxOut := &signrpc.TxOut{
+		PkScript: assetTxOut.PkScript,
+		Value:    assetTxOut.Value,
+	}
+	changeSignTxOut := &signrpc.TxOut{
+		PkScript: feeInputTxOut.PkScript,
+		Value:    feeInputTxOut.Value,
+	}
+	rawSig, err := lnd.RPC.Signer.SignOutputRaw(
+		context.Background(), &signrpc.SignReq{
+			RawTxBytes: buf.Bytes(),
+			SignDescs: []*signrpc.SignDescriptor{
+				{
+					KeyDesc: &signrpc.KeyDescriptor{
+						KeyLoc: &signrpc.KeyLocator{
+							KeyFamily: int32(keyDesc.Family),
+							KeyIndex:  int32(keyDesc.Index),
+						},
+					},
+					SignMethod:    signrpc.SignMethod_SIGN_METHOD_TAPROOT_SCRIPT_SPEND,
+					WitnessScript: successScript,
+					Output:        assetSignTxOut,
+					Sighash:       uint32(txscript.SigHashDefault),
+					InputIndex:    0,
+				},
+			},
+			PrevOutputs: []*signrpc.TxOut{
+				assetSignTxOut, changeSignTxOut,
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	controlBlockBytes, err := controlBlock.ToBytes()
+	require.NoError(t, err)
+
+	return wire.TxWitness{
+		preimage[:],
+		rawSig.RawSigs[0],
+		successScript,
+		controlBlockBytes,
+	}
 }
