@@ -500,8 +500,6 @@ github.com/lightninglabs/lightning-node-connect/hashmailrpc v1.0.2 h1:Er1miPZD2X
 github.com/lightninglabs/lightning-node-connect/hashmailrpc v1.0.2/go.mod h1:antQGRDRJiuyQF6l+k6NECCSImgCpwaZapATth2Chv4=
 github.com/lightninglabs/lndclient v0.17.4-2 h1:ORQhPRS3u8Xcc688BbAOWKd94F3xRO+LnQS/P/USwmw=
 github.com/lightninglabs/lndclient v0.17.4-2/go.mod h1:2krqTDgp3W3DLSDx9bYaT0MDrMVslGMXETViKE8J1pk=
-github.com/lightninglabs/loop v0.27.1-beta.0.20240305140427-65b8cb603669 h1:bZ8mE9jN+2M6+mg4ryFLJvY8DxlDMILbF/LoU8AaHRc=
-github.com/lightninglabs/loop v0.27.1-beta.0.20240305140427-65b8cb603669/go.mod h1:mI7VFSqJjUu0TxxECohpzDk9w9Ro9Jwmuk3xvxoFv+s=
 github.com/lightninglabs/neutrino v0.16.0 h1:YNTQG32fPR/Zg0vvJVI65OBH8l3U18LSXXtX91hx0q0=
 github.com/lightninglabs/neutrino v0.16.0/go.mod h1:x3OmY2wsA18+Kc3TSV2QpSUewOCiscw2mKpXgZv2kZk=
 github.com/lightninglabs/neutrino/cache v1.1.2 h1:C9DY/DAPaPxbFC+xNNEI/z1SJY9GS3shmlu5hIQ798g=

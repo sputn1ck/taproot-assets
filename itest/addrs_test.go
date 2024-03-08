@@ -526,6 +526,7 @@ func sendProof(t *harnessTest, src, dst *tapdHarness,
 	var outpoint *taprpc.OutPoint
 	for _, out := range sendResp.Transfer.Outputs {
 		if bytes.Equal(out.ScriptKey, scriptKey) {
+			t.Log("found transfer")
 			wireOutPoint, err := wire.NewOutPointFromString(
 				out.Anchor.Outpoint,
 			)

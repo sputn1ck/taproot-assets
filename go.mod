@@ -28,7 +28,6 @@ require (
 	github.com/lightninglabs/aperture v0.1.21-beta.0.20230705004936-87bb996a4030
 	github.com/lightninglabs/lightning-node-connect/hashmailrpc v1.0.2
 	github.com/lightninglabs/lndclient v0.17.4-2
-	github.com/lightninglabs/loop v0.27.1-beta.0.20240305140427-65b8cb603669
 	github.com/lightninglabs/neutrino/cache v1.1.2
 	github.com/lightningnetwork/lnd v0.17.4-beta.rc1
 	github.com/lightningnetwork/lnd/cert v1.2.2

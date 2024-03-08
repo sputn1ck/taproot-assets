@@ -5,7 +5,7 @@ package itest
 var testCases = []*testCase{
 	{
 		name: "test loop swap",
-		test: testLoopSwap,
+		test: testLoopSwapV2,
 	},
 }
 

@@ -991,7 +991,9 @@ func CreateAnchorTx(vPackets []*tappsbt.VPacket) (*psbt.Packet, error) {
 	// With the dummy packet created, we'll walk through of vOutputs to set
 	// the taproot internal key for each of the outputs.
 	for _, vPkt := range vPackets {
+		fmt.Println("foo")
 		for i := range vPkt.Outputs {
+			fmt.Printf("bar %v \n", i)
 			vOut := vPkt.Outputs[i]
 
 			btcOut := &spendPkt.Outputs[vOut.AnchorOutputIndex]
@@ -1001,6 +1003,7 @@ func CreateAnchorTx(vPackets []*tappsbt.VPacket) (*psbt.Packet, error) {
 
 			bip32 := vOut.AnchorOutputBip32Derivation
 			for idx := range bip32 {
+				fmt.Println("foor1")
 				btcOut.Bip32Derivation =
 					tappsbt.AddBip32Derivation(
 						btcOut.Bip32Derivation,
@@ -1009,6 +1012,7 @@ func CreateAnchorTx(vPackets []*tappsbt.VPacket) (*psbt.Packet, error) {
 			}
 			trBip32 := vOut.AnchorOutputTaprootBip32Derivation
 			for idx := range trBip32 {
+				fmt.Println("foor2")
 				btcOut.TaprootBip32Derivation =
 					tappsbt.AddTaprootBip32Derivation(
 						btcOut.TaprootBip32Derivation,

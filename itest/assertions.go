@@ -991,6 +991,7 @@ func AssertBalanceByID(t *testing.T, client taprpc.TaprootAssetsClient,
 		},
 	)
 	require.NoError(t, err)
+	t.Logf("Got balances: %v", balancesResp)
 
 	balance, ok := balancesResp.AssetBalances[hex.EncodeToString(id)]
 	if amt == 0 {

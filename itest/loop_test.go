@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"testing"
+	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -13,13 +14,16 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	tap "github.com/lightninglabs/taproot-assets"
+	"github.com/lightninglabs/taproot-assets/address"
 	"github.com/lightninglabs/taproot-assets/asset"
 	"github.com/lightninglabs/taproot-assets/commitment"
 	"github.com/lightninglabs/taproot-assets/fn"
+	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightninglabs/taproot-assets/tappsbt"
 	"github.com/lightninglabs/taproot-assets/taprpc"
 	wrpc "github.com/lightninglabs/taproot-assets/taprpc/assetwalletrpc"
 	"github.com/lightninglabs/taproot-assets/taprpc/mintrpc"
+	"github.com/lightninglabs/taproot-assets/taprpc/tapdevrpc"
 	"github.com/lightninglabs/taproot-assets/tapsend"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
@@ -30,6 +34,390 @@ import (
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/stretchr/testify/require"
 )
+
+func testLoopSwapV2(t *harnessTest) {
+	ctxb := context.Background()
+	ctxt, cancel := context.WithTimeout(ctxb, defaultWaitTimeout)
+	defer cancel()
+
+	// We mint some grouped assets to use in the test. These assets are
+	// minted on the default tapd instance that is always created in the
+	// integration test (connected to lnd "Alice").
+	firstBatch := MintAssetsConfirmBatch(
+		t.t, t.lndHarness.Miner.Client, t.tapd,
+		[]*mintrpc.MintAssetRequest{issuableAssets[0]},
+	)[0]
+
+	var (
+		firstBatchGenesis = firstBatch.AssetGenesis
+		aliceTapd         = t.tapd
+		aliceLnd          = t.lndHarness.Alice
+		bobLnd            = t.lndHarness.Bob
+	)
+	// We create a second tapd node that will be used to simulate a second
+	// party in the test. This tapd node is connected to lnd "Bob".
+	bobTapd := setupTapdHarness(t.t, t, bobLnd, t.universeServer)
+	defer func() {
+		require.NoError(t.t, bobTapd.stop(!*noDelete))
+	}()
+
+	firstTransfer := uint64(1000)
+
+	// First we'll just send some funds to bob so we know that he funds
+	// the sweep with the htlc input, not other inputs he might have.
+	// We'll send 1000 assets to Bob.
+	bobAddr, err := bobTapd.NewAddr(
+		ctxt, &taprpc.NewAddrRequest{
+			AssetId:      firstBatchGenesis.AssetId,
+			Amt:          firstTransfer,
+			AssetVersion: issuableAssets[0].Asset.AssetVersion,
+		},
+	)
+	require.NoError(t.t, err)
+
+	_, err = t.tapd.SendAsset(
+		ctxt, &taprpc.SendAssetRequest{
+			TapAddrs: []string{bobAddr.Encoded},
+		},
+	)
+	require.NoError(t.t, err)
+
+	// Mine 10 blocks
+	MineBlocks(t.t, t.lndHarness.Miner.Client, 10, 1)
+
+	// ConfirmAndAssertOutboundTransfer(
+	// 	t.t, t.lndHarness.Miner.Client, t.tapd, sendResp1,
+	// 	firstBatchGenesis.AssetId, expectedAmounts, 0, len(expectedAmounts),
+	// )
+	// AssertNonInteractiveRecvComplete(t.t, bobTapd, 1)
+
+	// Sleep a couple of seconds for proof transfer.
+	<-time.After(5 * time.Second)
+
+	// And now we prepare the multisig addresses for both levels. On the
+	// BTC level we are going to do a 2-of-2 musig2 based multisig.
+	// On the asset level we are going to do a OP_TRUE based anyonecanspend
+	// scheme. The BTC level key is going to be called the "internal key".
+	_, aliceInternalKey := deriveKeys(t.t, aliceTapd)
+	_, bobInternalKey := deriveKeys(t.t, bobTapd)
+
+	// We now create the loop htlc.
+	blockRes := aliceLnd.RPC.GetBestBlock(&chainrpc.GetBestBlockRequest{})
+
+	var (
+		preimage = makeLndPreimage(t.t)
+		hash     = preimage.Hash()
+	)
+
+	// Create the loop htlc.
+	successPathScript, err := GenSuccessPathScript(
+		bobInternalKey.PubKey, hash,
+	)
+	require.NoError(t.t, err)
+
+	timeoutPathScript, err := GenTimeoutPathScript(
+		aliceInternalKey.PubKey, int64(blockRes.BlockHeight+100),
+	)
+	require.NoError(t.t, err)
+
+	// Assemble our taproot script tree from our leaves.
+	// Calculate the internal aggregate key.
+	aggregateKey, err := input.MuSig2CombineKeys(
+		input.MuSig2Version100RC2,
+		[]*btcec.PublicKey{
+			aliceInternalKey.PubKey, bobInternalKey.PubKey,
+		},
+		true,
+		&input.MuSig2Tweaks{},
+	)
+	require.NoError(t.t, err)
+
+	btcInternalKey := aggregateKey.PreTweakedKey
+	btcControlBlock := &txscript.ControlBlock{
+		LeafVersion: txscript.BaseLeafVersion,
+		InternalKey: btcInternalKey,
+	}
+	t.t.Logf("Internal key: %v", btcControlBlock)
+
+	timeoutLeaf := txscript.NewBaseTapLeaf(timeoutPathScript)
+	branch := txscript.NewTapBranch(
+		txscript.NewBaseTapLeaf(successPathScript),
+		timeoutLeaf,
+	)
+	siblingPreimage := commitment.NewPreimageFromBranch(branch)
+	siblingPreimageBytes, _, err := commitment.MaybeEncodeTapscriptPreimage(
+		&siblingPreimage,
+	)
+	require.NoError(t.t, err)
+	t.t.Logf("Sibiling preimage: %x", siblingPreimageBytes)
+
+	const assetsToSend = 1000
+	tapScriptKey, _, _, controlBlock := createOpTrueLeaf(t.t)
+	t.t.Logf("Tapscript key: %v", tapScriptKey)
+
+	// Create a new vPkt.
+	assetId := asset.ID{}
+	copy(assetId[:], firstBatchGenesis.AssetId)
+	pkt := &tappsbt.VPacket{
+		Inputs: []*tappsbt.VInput{{
+			PrevID: asset.PrevID{
+				ID: assetId,
+			},
+		}},
+		Outputs:     make([]*tappsbt.VOutput, 0, 2),
+		ChainParams: &address.RegressionNetTap,
+	}
+	pkt.Outputs = append(pkt.Outputs, &tappsbt.VOutput{
+		Amount:            0,
+		Type:              tappsbt.TypeSplitRoot,
+		AnchorOutputIndex: 0,
+		ScriptKey:         asset.NUMSScriptKey,
+	})
+	pkt.Outputs = append(pkt.Outputs, &tappsbt.VOutput{
+		AssetVersion:      asset.Version(issuableAssets[0].Asset.AssetVersion),
+		Amount:            assetsToSend,
+		Interactive:       true,
+		AnchorOutputIndex: 1,
+		ScriptKey: asset.NewScriptKey(
+			tapScriptKey.PubKey,
+		),
+		AnchorOutputInternalKey:      btcInternalKey,
+		AnchorOutputTapscriptSibling: &siblingPreimage,
+		//ProofDeliveryAddress:         &addr.ProofCourierAddr,
+	})
+	// pkt.Outputs[1].SetAnchorInternalKey(
+	// 	keychain.KeyDescriptor{
+	// 		PubKey: btcInternalKey,
+	// 	}, address.RegressionNetTap.HDCoinType,
+	// )
+
+	// We now can fund the vpsbt.
+	fundResp := fundPacket(t, aliceTapd, pkt)
+	t.Logf("Funded packet: %v", toJSON(t.t, fundResp))
+	signResp, err := aliceTapd.SignVirtualPsbt(
+		ctxt, &wrpc.SignVirtualPsbtRequest{
+			FundedPsbt: fundResp.FundedPsbt,
+		},
+	)
+	require.NoError(t.t, err)
+	t.Logf("Sign resp: %v", toJSON(t.t, signResp))
+
+	fundedHtlcPkt := deserializeVPacket(
+		t.t, signResp.SignedPsbt,
+	)
+
+	// for _, input := range fundedWithdrawPkt.Inputs {
+	// 	t.Logf("vpkt input %v", input)
+	// }
+
+	// for _, output := range fundedWithdrawPkt.Outputs {
+	// 	t.Logf("vpkt output %v", output)
+	// }
+
+	htlcVPackets := []*tappsbt.VPacket{fundedHtlcPkt}
+	htlcBtcPkt, err := tapsend.PrepareAnchoringTemplate(htlcVPackets)
+	require.NoError(t.t, err)
+
+	btcPacket, activeAssets, passiveAssets, commitResp := commitVirtualPsbts(
+		t.t, aliceTapd, htlcBtcPkt, htlcVPackets, nil, -1,
+	)
+	require.NoError(t.t, err)
+	btcPacket = signPacket(t.t, aliceLnd, btcPacket)
+	btcPacket = finalizePacket(t.t, aliceLnd, btcPacket)
+	sendResp := logAndPublish(
+		t.t, aliceTapd, btcPacket, activeAssets, passiveAssets,
+		commitResp,
+	)
+	t.Logf("Logged transaction: %v", toJSON(t.t, sendResp))
+
+	multiSigOutAnchor := sendResp.Transfer.Outputs[1].Anchor
+	timeoutLeafHash := timeoutLeaf.TapHash()
+	btcControlBlock.InclusionProof = append(
+		timeoutLeafHash[:], multiSigOutAnchor.TaprootAssetRoot[:]...)
+
+	rootHash := btcControlBlock.RootHash(successPathScript)
+	tapKey := txscript.ComputeTaprootOutputKey(btcInternalKey, rootHash)
+
+	if tapKey.SerializeCompressed()[0] ==
+		secp256k1.PubKeyFormatCompressedOdd {
+
+		btcControlBlock.OutputKeyYIsOdd = true
+	}
+	require.Equal(t.t, rootHash[:], multiSigOutAnchor.MerkleRoot)
+
+	// Let's mine a transaction to make sure the transfer completes.
+	expectedAmounts := []uint64{
+		firstBatch.Amount - assetsToSend - firstTransfer, assetsToSend,
+	}
+
+	// Mine a block in order to be able to create the proof.
+	ConfirmAndAssertOutboundTransferWithOutputs(
+		t.t, t.lndHarness.Miner.Client, aliceTapd,
+		sendResp, firstBatchGenesis.AssetId, expectedAmounts,
+		1, 2, len(expectedAmounts),
+	)
+
+	// Get the proof for the vpsbt.
+	// Parse the outpoint.
+	outpoint, err := wire.NewOutPointFromString(multiSigOutAnchor.Outpoint)
+	require.NoError(t.t, err)
+
+	htlcProofRes, err := aliceTapd.ExportProof(
+		ctxt, &taprpc.ExportProofRequest{
+			AssetId:   firstBatchGenesis.AssetId,
+			ScriptKey: tapScriptKey.PubKey.SerializeCompressed(),
+			Outpoint: &taprpc.OutPoint{
+				Txid:        outpoint.Hash[:],
+				OutputIndex: outpoint.Index,
+			},
+		},
+	)
+	require.NoError(t.t, err)
+
+	isValidProof, err := bobTapd.VerifyProof(
+		ctxt, &taprpc.ProofFile{
+			RawProofFile: htlcProofRes.RawProofFile,
+		},
+	)
+	require.NoError(t.t, err)
+	require.True(t.t, isValidProof.Valid)
+
+	importRes, err := bobTapd.ImportProof(
+		ctxt, &tapdevrpc.ImportProofRequest{
+			ProofFile: htlcProofRes.RawProofFile,
+		},
+	)
+	require.NoError(t.t, err)
+	t.Logf("Imported proof: %v", toJSON(t.t, importRes))
+
+	// Create a reader from the htlcProofFile.ProofFile bytes slice.
+	htlcProofFile, err := proof.DecodeFile(htlcProofRes.RawProofFile)
+	require.NoError(t.t, err)
+
+	// Get the proofs.
+	htlcProof, err := htlcProofFile.LastProof()
+	require.NoError(t.t, err)
+
+	t.Logf("HTLC proof: %v", htlcProof)
+
+	scriptKey, sweepInternalKey := deriveKeys(t.t, bobTapd)
+
+	sweepVpkt, err := tappsbt.PacketFromProofs(
+		[]*proof.Proof{htlcProof}, &address.RegressionNetTap,
+	)
+	require.NoError(t.t, err)
+
+	sweepVpkt.Outputs = append(sweepVpkt.Outputs, &tappsbt.VOutput{
+		AssetVersion:            asset.Version(issuableAssets[0].Asset.AssetVersion),
+		Amount:                  assetsToSend,
+		Interactive:             true,
+		AnchorOutputIndex:       0,
+		ScriptKey:               scriptKey,
+		AnchorOutputInternalKey: sweepInternalKey.PubKey,
+	})
+
+	sweepVpkt.Outputs[0].SetAnchorInternalKey(
+		sweepInternalKey, address.RegressionNetTap.HDCoinType,
+	)
+
+	t.Logf("input bip derivation %v", sweepVpkt.Inputs[0].TaprootBip32Derivation)
+
+	for idx, input := range sweepVpkt.Inputs {
+		t.Logf("vpkt %v input %v", idx, input)
+	}
+	for idx, output := range sweepVpkt.Outputs {
+		t.Logf("vpkt %v output %v", idx, output)
+	}
+
+	err = tapsend.PrepareOutputAssets(ctxt, sweepVpkt)
+	require.NoError(t.t, err)
+
+	controlBlockBytes, err := controlBlock.ToBytes()
+	require.NoError(t.t, err)
+
+	updateWitness(sweepVpkt.Outputs[0].Asset, wire.TxWitness{
+		getOpTrueScript(t.t),
+		controlBlockBytes,
+	})
+
+	sweepVPackets := []*tappsbt.VPacket{sweepVpkt}
+	sweepBtcPkt, err := tapsend.PrepareAnchoringTemplate(sweepVPackets)
+	require.NoError(t.t, err)
+	for idx, input := range sweepBtcPkt.Inputs {
+		t.Logf("btcpkt 1 %v input %v", idx, input.TaprootBip32Derivation)
+	}
+	for idx, output := range sweepBtcPkt.Outputs {
+		t.Logf("btcpkt 1 %v output %v", idx, output)
+	}
+
+	sweepBtcPacket, sweepActiveAssets, sweepPassiveAssets, sweepCommitResp := commitVirtualPsbts(
+		t.t, bobTapd, sweepBtcPkt, sweepVPackets, nil, -1,
+	)
+	require.NoError(t.t, err)
+
+	feeTxOut := &wire.TxOut{
+		PkScript: sweepBtcPacket.Inputs[1].WitnessUtxo.PkScript,
+		Value:    sweepBtcPacket.Inputs[1].WitnessUtxo.Value,
+	}
+
+	assetTxOut := &wire.TxOut{
+		PkScript: sweepBtcPacket.Inputs[0].WitnessUtxo.PkScript,
+		Value:    sweepBtcPacket.Inputs[0].WitnessUtxo.Value,
+	}
+
+	sweepBtcPacket.UnsignedTx.TxIn[0].Sequence = 1
+	txWitness := genSuccessWitness(
+		t.t, bobLnd, *btcControlBlock, preimage, successPathScript,
+		sweepBtcPacket.UnsignedTx, bobInternalKey, assetTxOut, feeTxOut,
+	)
+
+	var buf2 bytes.Buffer
+	err = psbt.WriteTxWitness(&buf2, txWitness)
+	require.NoError(t.t, err)
+	sweepBtcPacket.Inputs[0].SighashType = txscript.SigHashDefault
+	sweepBtcPacket.Inputs[0].FinalScriptWitness = buf2.Bytes()
+
+	sweepBtcPacket = signPacket(t.t, bobLnd, sweepBtcPacket)
+	sweepBtcPacket = finalizePacket(t.t, bobLnd, sweepBtcPacket)
+	sweepSendResp := logAndPublish(
+		t.t, bobTapd, sweepBtcPacket, sweepActiveAssets, sweepPassiveAssets,
+		sweepCommitResp,
+	)
+	t.Logf("Logged transaction: %v", toJSON(t.t, sweepSendResp))
+
+	// Mine a block to confirm the transfer.
+	MineBlocks(t.t, t.lndHarness.Miner.Client, 6, 1)
+
+	// _ = sendProof(
+	// 	t.t, bobTapd, bobTapd, sweepSendResp,
+	// )
+	AssertBalanceByID(
+		t.t, bobTapd, firstBatchGenesis.AssetId,
+		assetsToSend+firstTransfer,
+	)
+
+	aliceAssets, err := aliceTapd.ListAssets(ctxb, &taprpc.ListAssetRequest{
+		WithWitness: false,
+	})
+	require.NoError(t.t, err)
+	t.Logf("Alice assets: %v", toJSON(t.t, aliceAssets))
+
+	bobAssets, err := bobTapd.ListAssets(ctxb, &taprpc.ListAssetRequest{
+		WithWitness: true,
+	})
+	require.NoError(t.t, err)
+	t.Logf("Bob assets: %v", toJSON(t.t, bobAssets))
+}
+
+// func assetStatsToAssetGroup(t *testing.T,
+// 	assetStats *universerpc.AssetStatsSnapshot) *asset.AssetGroup {
+
+// 	// Create the asset genesis.
+// 	outpoint, err := wire.NewOutPointFromString(assetStats.GroupAnchor.GenesisPoint)
+// 	require.NoError(t, err)
+
+// 	tag := assetStats.GroupAnchor.AssetName
+// }
 
 func testLoopSwap(t *harnessTest) {
 	ctxb := context.Background()
@@ -115,6 +503,13 @@ func testLoopSwap(t *harnessTest) {
 	const assetsToSend = 1000
 	tapScriptKey, _, _, _ := createOpTrueLeaf(t.t)
 
+	// Create a new vPkt for interactive send
+	// First we'll need to fetch all of the asset information.
+
+	// vPkt := tappsbt.ForInteractiveSend(
+	// 	firstBatchGenesis.AssetId, assetsToSend, tapScriptKey.
+
+	// Todo replace flow.
 	tapdAddr, err := bobTapd.NewAddr(ctxt, &taprpc.NewAddrRequest{
 		AssetId:   firstBatchGenesis.AssetId,
 		Amt:       assetsToSend,
@@ -165,6 +560,31 @@ func testLoopSwap(t *harnessTest) {
 		0, 1, len(expectedAmounts),
 	)
 
+	// Parse the outpoint.
+	outpoint, err := wire.NewOutPointFromString(multiSigOutAnchor.Outpoint)
+	require.NoError(t.t, err)
+
+	proof, err := aliceTapd.ExportProof(
+		ctxt, &taprpc.ExportProofRequest{
+			AssetId: firstBatchGenesis.AssetId,
+			Outpoint: &taprpc.OutPoint{
+				Txid:        outpoint.Hash[:],
+				OutputIndex: outpoint.Index,
+			},
+			ScriptKey: tapdAddr.ScriptKey,
+		},
+	)
+	require.NoError(t.t, err)
+	t.Logf("Proof: %v", toJSON(t.t, proof))
+
+	decodedProof, err := bobTapd.DecodeProof(
+		ctxt, &taprpc.DecodeProofRequest{
+			RawProof: proof.RawProofFile,
+		},
+	)
+	require.NoError(t.t, err)
+	t.Logf("Decoded proof: %v", toJSON(t.t, decodedProof))
+
 	// And now the event should be completed on both sides.
 	AssertAddrEvent(t.t, bobTapd, tapdAddr, 1, statusCompleted)
 	AssertNonInteractiveRecvComplete(t.t, bobTapd, 1)
@@ -212,6 +632,10 @@ func testLoopSwap(t *harnessTest) {
 	vPackets := []*tappsbt.VPacket{fundedWithdrawPkt}
 	withdrawBtcPkt, err := tapsend.PrepareAnchoringTemplate(vPackets)
 	require.NoError(t.t, err)
+
+	for idx, input := range withdrawBtcPkt.Inputs {
+		t.Logf("INPUT DERIVATION BLA BLA btcpkt 1 %v input %v %v", idx, input.TaprootBip32Derivation, input.Bip32Derivation)
+	}
 
 	// By committing the virtual transaction to the BTC template we created,
 	// Bob's lnd node will fund the BTC level transaction with an input to
@@ -383,12 +807,19 @@ func makeLndPreimage(t *testing.T) lntypes.Preimage {
 	return preimage
 }
 
+func getOpTrueScript(t *testing.T) []byte {
+	builder := txscript.NewScriptBuilder()
+	builder.AddOp(txscript.OP_TRUE)
+	script, err := builder.Script()
+	require.NoError(t, err)
+	return script
+}
+
 func createOpTrueLeaf(t *testing.T) (asset.ScriptKey, txscript.TapLeaf,
 	*txscript.IndexedTapScriptTree, *txscript.ControlBlock) {
 
 	// Create the taproot OP_TRUE script.
-	tapScript, err := txscript.NewScriptBuilder().AddOp(txscript.OP_TRUE).Script()
-	require.NoError(t, err)
+	tapScript := getOpTrueScript(t)
 
 	tapLeaf := txscript.NewBaseTapLeaf(tapScript)
 	tree := txscript.AssembleTaprootScriptTree(tapLeaf)
