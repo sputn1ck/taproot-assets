@@ -10,10 +10,10 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
-	tap "github.com/lightninglabs/taproot-assets"
 	"github.com/lightninglabs/taproot-assets/address"
 	"github.com/lightninglabs/taproot-assets/asset"
 	"github.com/lightninglabs/taproot-assets/commitment"
@@ -24,6 +24,7 @@ import (
 	wrpc "github.com/lightninglabs/taproot-assets/taprpc/assetwalletrpc"
 	"github.com/lightninglabs/taproot-assets/taprpc/mintrpc"
 	"github.com/lightninglabs/taproot-assets/taprpc/tapdevrpc"
+	"github.com/lightninglabs/taproot-assets/tapscript"
 	"github.com/lightninglabs/taproot-assets/tapsend"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
@@ -152,7 +153,7 @@ func testLoopSwapV2(t *harnessTest) {
 	t.t.Logf("Sibiling preimage: %x", siblingPreimageBytes)
 
 	const assetsToSend = 1000
-	tapScriptKey, _, _, controlBlock := createOpTrueLeaf(t.t)
+	tapScriptKey := createOpTrueScriptKey(t.t)
 	t.t.Logf("Tapscript key: %v", tapScriptKey)
 
 	// Create a new vPkt.
@@ -300,6 +301,49 @@ func testLoopSwapV2(t *harnessTest) {
 
 	t.Logf("HTLC proof: %v", htlcProof)
 
+	// Do the taptree verification from the proof.
+	assetCpy := htlcProof.Asset.Copy()
+	assetCpy.PrevWitnesses[0].SplitCommitment = nil
+	sendCommitment, err := commitment.NewAssetCommitment(
+		assetCpy,
+	)
+	require.NoError(t.t, err)
+
+	assetCommitment, err := commitment.NewTapCommitment(
+		sendCommitment,
+	)
+
+	require.NoError(t.t, err)
+
+	siblingHash, err := siblingPreimage.TapHash()
+	require.NoError(t.t, err)
+
+	anchorPkScript, err := tapscript.PayToAddrScript(
+		*btcInternalKey, siblingHash, *assetCommitment,
+	)
+	require.NoError(t.t, err)
+
+	// verify calculated pkscript matches the one in the proof.
+	require.Equal(
+		t.t, btcPacket.UnsignedTx.TxOut[1].PkScript, anchorPkScript,
+	)
+
+	// verify asset script key matches the op_true one.
+	require.Equal(
+		t.t, htlcProof.Asset.ScriptKey.PubKey, asset.NewScriptKey(tapScriptKey.PubKey).PubKey,
+	)
+	taprootAssetRoot := txscript.AssembleTaprootScriptTree(assetCommitment.TapLeaf()).RootNode.TapHash()
+	merkleRoot := assetCommitment.TapscriptRoot(siblingHash)
+
+	expectedTapasRoot, err := chainhash.NewHash(sendResp.Transfer.Outputs[1].Anchor.TaprootAssetRoot)
+	require.NoError(t.t, err)
+
+	expectedMerkleRoot, err := chainhash.NewHash(sendResp.Transfer.Outputs[1].Anchor.MerkleRoot)
+	require.NoError(t.t, err)
+
+	require.Equal(t.t, expectedTapasRoot, &taprootAssetRoot)
+	require.Equal(t.t, expectedMerkleRoot, &merkleRoot)
+
 	scriptKey, sweepInternalKey := deriveKeys(t.t, bobTapd)
 
 	sweepVpkt, err := tappsbt.PacketFromProofs(
@@ -332,13 +376,9 @@ func testLoopSwapV2(t *harnessTest) {
 	err = tapsend.PrepareOutputAssets(ctxt, sweepVpkt)
 	require.NoError(t.t, err)
 
-	controlBlockBytes, err := controlBlock.ToBytes()
 	require.NoError(t.t, err)
 
-	updateWitness(sweepVpkt.Outputs[0].Asset, wire.TxWitness{
-		getOpTrueScript(t.t),
-		controlBlockBytes,
-	})
+	updateWitness(sweepVpkt.Outputs[0].Asset, getOpTrueWitness(t.t))
 
 	sweepVPackets := []*tappsbt.VPacket{sweepVpkt}
 	sweepBtcPkt, err := tapsend.PrepareAnchoringTemplate(sweepVPackets)
@@ -407,292 +447,6 @@ func testLoopSwapV2(t *harnessTest) {
 	})
 	require.NoError(t.t, err)
 	t.Logf("Bob assets: %v", toJSON(t.t, bobAssets))
-}
-
-// func assetStatsToAssetGroup(t *testing.T,
-// 	assetStats *universerpc.AssetStatsSnapshot) *asset.AssetGroup {
-
-// 	// Create the asset genesis.
-// 	outpoint, err := wire.NewOutPointFromString(assetStats.GroupAnchor.GenesisPoint)
-// 	require.NoError(t, err)
-
-// 	tag := assetStats.GroupAnchor.AssetName
-// }
-
-func testLoopSwap(t *harnessTest) {
-	ctxb := context.Background()
-	ctxt, cancel := context.WithTimeout(ctxb, defaultWaitTimeout)
-	defer cancel()
-
-	// We mint some grouped assets to use in the test. These assets are
-	// minted on the default tapd instance that is always created in the
-	// integration test (connected to lnd "Alice").
-	firstBatch := MintAssetsConfirmBatch(
-		t.t, t.lndHarness.Miner.Client, t.tapd,
-		[]*mintrpc.MintAssetRequest{issuableAssets[0]},
-	)[0]
-
-	var (
-		firstBatchGenesis = firstBatch.AssetGenesis
-		aliceTapd         = t.tapd
-		aliceLnd          = t.lndHarness.Alice
-		bobLnd            = t.lndHarness.Bob
-	)
-	// We create a second tapd node that will be used to simulate a second
-	// party in the test. This tapd node is connected to lnd "Bob".
-	bobTapd := setupTapdHarness(t.t, t, bobLnd, t.universeServer)
-	defer func() {
-		require.NoError(t.t, bobTapd.stop(!*noDelete))
-	}()
-
-	// And now we prepare the multisig addresses for both levels. On the
-	// BTC level we are going to do a 2-of-2 musig2 based multisig.
-	// On the asset level we are going to do a OP_TRUE based anyonecanspend
-	// scheme. The BTC level key is going to be called the "internal key".
-	_, aliceInternalKey := deriveKeys(t.t, aliceTapd)
-	_, bobInternalKey := deriveKeys(t.t, bobTapd)
-
-	// We now create the loop htlc.
-	blockRes := aliceLnd.RPC.GetBestBlock(&chainrpc.GetBestBlockRequest{})
-
-	var (
-		preimage = makeLndPreimage(t.t)
-		hash     = preimage.Hash()
-	)
-
-	// Create the loop htlc.
-	successPathScript, err := GenSuccessPathScript(
-		bobInternalKey.PubKey, hash,
-	)
-	require.NoError(t.t, err)
-
-	timeoutPathScript, err := GenTimeoutPathScript(
-		aliceInternalKey.PubKey, int64(blockRes.BlockHeight+100),
-	)
-	require.NoError(t.t, err)
-
-	// Assemble our taproot script tree from our leaves.
-	// Calculate the internal aggregate key.
-	aggregateKey, err := input.MuSig2CombineKeys(
-		input.MuSig2Version100RC2,
-		[]*btcec.PublicKey{
-			aliceInternalKey.PubKey, bobInternalKey.PubKey,
-		},
-		true,
-		&input.MuSig2Tweaks{},
-	)
-	require.NoError(t.t, err)
-
-	btcInternalKey := aggregateKey.PreTweakedKey
-	btcControlBlock := &txscript.ControlBlock{
-		LeafVersion: txscript.BaseLeafVersion,
-		InternalKey: btcInternalKey,
-	}
-
-	timeoutLeaf := txscript.NewBaseTapLeaf(timeoutPathScript)
-	branch := txscript.NewTapBranch(
-		txscript.NewBaseTapLeaf(successPathScript),
-		timeoutLeaf,
-	)
-	siblingPreimage := commitment.NewPreimageFromBranch(branch)
-	siblingPreimageBytes, _, err := commitment.MaybeEncodeTapscriptPreimage(
-		&siblingPreimage,
-	)
-	require.NoError(t.t, err)
-
-	const assetsToSend = 1000
-	tapScriptKey, _, _, _ := createOpTrueLeaf(t.t)
-
-	// Create a new vPkt for interactive send
-	// First we'll need to fetch all of the asset information.
-
-	// vPkt := tappsbt.ForInteractiveSend(
-	// 	firstBatchGenesis.AssetId, assetsToSend, tapScriptKey.
-
-	// Todo replace flow.
-	tapdAddr, err := bobTapd.NewAddr(ctxt, &taprpc.NewAddrRequest{
-		AssetId:   firstBatchGenesis.AssetId,
-		Amt:       assetsToSend,
-		ScriptKey: tap.MarshalScriptKey(tapScriptKey),
-		InternalKey: &taprpc.KeyDescriptor{
-			RawKeyBytes: pubKeyBytes(btcInternalKey),
-		},
-		TapscriptSibling: siblingPreimageBytes[:],
-	})
-	require.NoError(t.t, err)
-
-	// Now we can create our virtual transaction and ask Alice's tapd to
-	// fund it.
-	sendResp, err := aliceTapd.SendAsset(ctxt, &taprpc.SendAssetRequest{
-		TapAddrs: []string{tapdAddr.Encoded},
-	})
-	require.NoError(t.t, err)
-
-	t.Logf("Initial transaction: %v", toJSON(t.t, sendResp))
-
-	// By anchoring the virtual transaction, we can now learn the asset
-	// commitment root which we'll need to include in the control block to
-	// be able to spend the tapscript path later. The convention is that the
-	// change output of a virtual transaction is always at index 0. So our
-	// address output should be at index 1.
-	multiSigOutAnchor := sendResp.Transfer.Outputs[1].Anchor
-	timeoutLeafHash := timeoutLeaf.TapHash()
-	btcControlBlock.InclusionProof = append(
-		timeoutLeafHash[:], multiSigOutAnchor.TaprootAssetRoot[:]...)
-
-	rootHash := btcControlBlock.RootHash(successPathScript)
-	tapKey := txscript.ComputeTaprootOutputKey(btcInternalKey, rootHash)
-
-	if tapKey.SerializeCompressed()[0] ==
-		secp256k1.PubKeyFormatCompressedOdd {
-
-		btcControlBlock.OutputKeyYIsOdd = true
-	}
-	require.Equal(t.t, rootHash[:], multiSigOutAnchor.MerkleRoot)
-
-	// Let's mine a transaction to make sure the transfer completes.
-	expectedAmounts := []uint64{
-		firstBatch.Amount - assetsToSend, assetsToSend,
-	}
-	ConfirmAndAssertOutboundTransferWithOutputs(
-		t.t, t.lndHarness.Miner.Client, aliceTapd,
-		sendResp, firstBatchGenesis.AssetId, expectedAmounts,
-		0, 1, len(expectedAmounts),
-	)
-
-	// Parse the outpoint.
-	outpoint, err := wire.NewOutPointFromString(multiSigOutAnchor.Outpoint)
-	require.NoError(t.t, err)
-
-	proof, err := aliceTapd.ExportProof(
-		ctxt, &taprpc.ExportProofRequest{
-			AssetId: firstBatchGenesis.AssetId,
-			Outpoint: &taprpc.OutPoint{
-				Txid:        outpoint.Hash[:],
-				OutputIndex: outpoint.Index,
-			},
-			ScriptKey: tapdAddr.ScriptKey,
-		},
-	)
-	require.NoError(t.t, err)
-	t.Logf("Proof: %v", toJSON(t.t, proof))
-
-	decodedProof, err := bobTapd.DecodeProof(
-		ctxt, &taprpc.DecodeProofRequest{
-			RawProof: proof.RawProofFile,
-		},
-	)
-	require.NoError(t.t, err)
-	t.Logf("Decoded proof: %v", toJSON(t.t, decodedProof))
-
-	// And now the event should be completed on both sides.
-	AssertAddrEvent(t.t, bobTapd, tapdAddr, 1, statusCompleted)
-	AssertNonInteractiveRecvComplete(t.t, bobTapd, 1)
-	AssertBalanceByID(
-		t.t, bobTapd, firstBatchGenesis.AssetId, assetsToSend,
-	)
-
-	// We have now stored our assets in a double-multisig protected TAP
-	// address. Let's now try to spend them back to Alice. Let's create a
-	// virtual transaction that sends half of the assets back to Alice.
-	withdrawAddr, err := bobTapd.NewAddr(ctxt, &taprpc.NewAddrRequest{
-		AssetId: firstBatchGenesis.AssetId,
-		Amt:     assetsToSend,
-	})
-	require.NoError(t.t, err)
-
-	// We fund this withdrawal transaction from Bob's tapd which only has
-	// the multisig locked assets currently.
-	withdrawRecipients := map[string]uint64{
-		withdrawAddr.Encoded: withdrawAddr.Amount,
-	}
-	withdrawFundResp, err := bobTapd.FundVirtualPsbt(
-		ctxt, &wrpc.FundVirtualPsbtRequest{
-			Template: &wrpc.FundVirtualPsbtRequest_Raw{
-				Raw: &wrpc.TxTemplate{
-					Recipients: withdrawRecipients,
-				},
-			},
-		},
-	)
-	require.NoError(t.t, err)
-
-	fundedWithdrawPkt := deserializeVPacket(
-		t.t, withdrawFundResp.FundedPsbt,
-	)
-
-	for _, input := range fundedWithdrawPkt.Inputs {
-		t.Logf("vpkt input %v", input)
-	}
-
-	for _, output := range fundedWithdrawPkt.Outputs {
-		t.Logf("vpkt output %v", output)
-	}
-
-	vPackets := []*tappsbt.VPacket{fundedWithdrawPkt}
-	withdrawBtcPkt, err := tapsend.PrepareAnchoringTemplate(vPackets)
-	require.NoError(t.t, err)
-
-	for idx, input := range withdrawBtcPkt.Inputs {
-		t.Logf("INPUT DERIVATION BLA BLA btcpkt 1 %v input %v %v", idx, input.TaprootBip32Derivation, input.Bip32Derivation)
-	}
-
-	// By committing the virtual transaction to the BTC template we created,
-	// Bob's lnd node will fund the BTC level transaction with an input to
-	// pay for the fees (and it will also add a change output).
-	btcWithdrawPkt, finalizedWithdrawPackets, _, commitResp := commitVirtualPsbts(
-		t.t, bobTapd, withdrawBtcPkt, vPackets, nil, -1,
-	)
-	require.NoError(t.t, err)
-
-	//newRootHash := sendResp.Transfer.Outputs[1].Anchor.TaprootAssetRoot
-
-	// We now get the the signature for the anchor tx.
-	// sig := signMusig2Psbt(
-	// 	t.t, ctxt, aliceLnd, bobLnd, aliceInternalKey, bobInternalKey,
-	// 	btcWithdrawPkt.UnsignedTx, newRootHash, newBlock.Transactions[1].TxOut[1],
-	// )
-
-	feeTxOut := &wire.TxOut{
-		PkScript: btcWithdrawPkt.Inputs[1].WitnessUtxo.PkScript,
-		Value:    btcWithdrawPkt.Inputs[1].WitnessUtxo.Value,
-	}
-
-	assetTxOut := &wire.TxOut{
-		PkScript: btcWithdrawPkt.Inputs[0].WitnessUtxo.PkScript,
-		Value:    btcWithdrawPkt.Inputs[0].WitnessUtxo.Value,
-	}
-
-	btcWithdrawPkt.UnsignedTx.TxIn[0].Sequence = 1
-	txWitness := genSuccessWitness(
-		t.t, bobLnd, *btcControlBlock, preimage, successPathScript,
-		btcWithdrawPkt.UnsignedTx, bobInternalKey, assetTxOut, feeTxOut,
-	)
-
-	var buf2 bytes.Buffer
-	err = psbt.WriteTxWitness(&buf2, txWitness)
-	require.NoError(t.t, err)
-	btcWithdrawPkt.Inputs[0].SighashType = txscript.SigHashDefault
-	btcWithdrawPkt.Inputs[0].FinalScriptWitness = buf2.Bytes()
-
-	// Finalize the packet.
-	signedPkt := finalizePacket(t.t, bobLnd, btcWithdrawPkt)
-
-	logResp := logAndPublish(
-		t.t, bobTapd, signedPkt, finalizedWithdrawPackets, nil,
-		commitResp,
-	)
-
-	t.Logf("Logged transaction: %v", toJSON(t.t, logResp))
-
-	// Mine a block to confirm the transfer.
-	MineBlocks(t.t, t.lndHarness.Miner.Client, 1, 1)
-
-	AssertAddrEvent(t.t, bobTapd, withdrawAddr, 1, statusCompleted)
-	AssertBalanceByID(
-		t.t, bobTapd, firstBatchGenesis.AssetId,
-		assetsToSend,
-	)
 }
 
 func signMusig2Psbt(t *testing.T, ctx context.Context, aliceLnd, bobLnd *node.HarnessNode,
@@ -805,49 +559,6 @@ func makeLndPreimage(t *testing.T) lntypes.Preimage {
 	_, err := rand.Read(preimage[:])
 	require.NoError(t, err)
 	return preimage
-}
-
-func getOpTrueScript(t *testing.T) []byte {
-	builder := txscript.NewScriptBuilder()
-	builder.AddOp(txscript.OP_TRUE)
-	script, err := builder.Script()
-	require.NoError(t, err)
-	return script
-}
-
-func createOpTrueLeaf(t *testing.T) (asset.ScriptKey, txscript.TapLeaf,
-	*txscript.IndexedTapScriptTree, *txscript.ControlBlock) {
-
-	// Create the taproot OP_TRUE script.
-	tapScript := getOpTrueScript(t)
-
-	tapLeaf := txscript.NewBaseTapLeaf(tapScript)
-	tree := txscript.AssembleTaprootScriptTree(tapLeaf)
-	rootHash := tree.RootNode.TapHash()
-	tapKey := txscript.ComputeTaprootOutputKey(asset.NUMSPubKey, rootHash[:])
-
-	merkleRootHash := tree.RootNode.TapHash()
-
-	controlBlock := &txscript.ControlBlock{
-		LeafVersion: txscript.BaseLeafVersion,
-		InternalKey: asset.NUMSPubKey,
-	}
-	tapScriptKey := asset.ScriptKey{
-		PubKey: tapKey,
-		TweakedScriptKey: &asset.TweakedScriptKey{
-			RawKey: keychain.KeyDescriptor{
-				PubKey: asset.NUMSPubKey,
-			},
-			Tweak: merkleRootHash[:],
-		},
-	}
-	if tapKey.SerializeCompressed()[0] ==
-		secp256k1.PubKeyFormatCompressedOdd {
-
-		controlBlock.OutputKeyYIsOdd = true
-	}
-
-	return tapScriptKey, tapLeaf, tree, controlBlock
 }
 
 func partialSignWithKeyTopLevel(t *testing.T, lnd *node.HarnessNode, pkt *psbt.Packet,
