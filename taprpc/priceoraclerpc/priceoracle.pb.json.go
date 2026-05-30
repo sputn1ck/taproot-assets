@@ -12,7 +12,7 @@ import (
 )
 
 func RegisterPriceOracleJSONCallbacks(registry map[string]func(ctx context.Context,
-	conn *grpc.ClientConn, reqJSON string, callback func(string, error))) {
+	conn grpc.ClientConnInterface, reqJSON string, callback func(string, error))) {
 
 	marshaler := &gateway.JSONPb{
 		MarshalOptions: protojson.MarshalOptions{
@@ -22,7 +22,7 @@ func RegisterPriceOracleJSONCallbacks(registry map[string]func(ctx context.Conte
 	}
 
 	registry["priceoraclerpc.PriceOracle.QueryAssetRates"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &QueryAssetRatesRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)

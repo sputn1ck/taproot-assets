@@ -18,7 +18,7 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-errors/errors v1.0.1
-	github.com/golang-migrate/migrate/v4 v4.17.0
+	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.0.0-rc.0
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.20.0
@@ -41,6 +41,7 @@ require (
 	github.com/ory/dockertest/v3 v3.10.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/prometheus/client_golang v1.14.0
+	github.com/sputn1ck/go-wasmsqlite v0.0.0-20260520120252-ad47958a84d3
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli v1.22.14
 	golang.org/x/crypto v0.47.0

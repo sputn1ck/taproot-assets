@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
@@ -242,6 +243,13 @@ func (l *LndRpcWalletAnchor) SubscribeTransactions(
 	ctx context.Context) (<-chan lndclient.Transaction, <-chan error,
 	error) {
 
+	if runtime.GOOS == "js" && runtime.GOARCH == "wasm" {
+		txChan := make(chan lndclient.Transaction)
+		errChan := make(chan error)
+
+		return txChan, errChan, nil
+	}
+
 	return l.lnd.Client.SubscribeTransactions(ctx)
 }
 
@@ -252,6 +260,10 @@ func (l *LndRpcWalletAnchor) SubscribeTransactions(
 // -1.
 func (l *LndRpcWalletAnchor) ListTransactions(ctx context.Context, startHeight,
 	endHeight int32, account string) ([]lndclient.Transaction, error) {
+
+	if runtime.GOOS == "js" && runtime.GOARCH == "wasm" {
+		return nil, nil
+	}
 
 	return l.lnd.Client.ListTransactions(
 		ctx, startHeight, endHeight,

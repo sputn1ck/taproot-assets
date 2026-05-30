@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -736,6 +737,10 @@ func ValidateConfig(cfg Config, cfgLogger btclog.Logger) (*Config, error) {
 		return fmt.Errorf(funcName+": "+format, args...)
 	}
 	makeDirectory := func(dir string) error {
+		if runtime.GOOS == "js" && runtime.GOARCH == "wasm" {
+			return nil
+		}
+
 		err := os.MkdirAll(dir, 0700)
 		if err != nil {
 			// Show a nicer error message if it's because a symlink

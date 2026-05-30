@@ -12,7 +12,7 @@ import (
 )
 
 func RegisterMintJSONCallbacks(registry map[string]func(ctx context.Context,
-	conn *grpc.ClientConn, reqJSON string, callback func(string, error))) {
+	conn grpc.ClientConnInterface, reqJSON string, callback func(string, error))) {
 
 	marshaler := &gateway.JSONPb{
 		MarshalOptions: protojson.MarshalOptions{
@@ -22,7 +22,7 @@ func RegisterMintJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["mintrpc.Mint.MintAsset"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &MintAssetRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -47,7 +47,7 @@ func RegisterMintJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["mintrpc.Mint.FundBatch"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &FundBatchRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -72,7 +72,7 @@ func RegisterMintJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["mintrpc.Mint.SealBatch"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &SealBatchRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -97,7 +97,7 @@ func RegisterMintJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["mintrpc.Mint.FinalizeBatch"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &FinalizeBatchRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -122,7 +122,7 @@ func RegisterMintJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["mintrpc.Mint.CancelBatch"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &CancelBatchRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -147,7 +147,7 @@ func RegisterMintJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["mintrpc.Mint.ListBatches"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ListBatchRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -172,7 +172,7 @@ func RegisterMintJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["mintrpc.Mint.SubscribeMintEvents"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &SubscribeMintEventsRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)

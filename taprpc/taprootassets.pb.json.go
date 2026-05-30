@@ -12,7 +12,7 @@ import (
 )
 
 func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Context,
-	conn *grpc.ClientConn, reqJSON string, callback func(string, error))) {
+	conn grpc.ClientConnInterface, reqJSON string, callback func(string, error))) {
 
 	marshaler := &gateway.JSONPb{
 		MarshalOptions: protojson.MarshalOptions{
@@ -22,7 +22,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.ListAssets"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ListAssetRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -47,7 +47,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.FetchAsset"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &FetchAssetRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -72,7 +72,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.ListUtxos"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ListUtxosRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -97,7 +97,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.ListGroups"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ListGroupsRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -122,7 +122,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.ListBalances"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ListBalancesRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -147,7 +147,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.ListTransfers"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ListTransfersRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -172,7 +172,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.StopDaemon"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &StopRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -197,7 +197,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.DebugLevel"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &DebugLevelRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -222,7 +222,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.QueryAddrs"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &QueryAddrRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -247,7 +247,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.NewAddr"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &NewAddrRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -272,7 +272,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.DecodeAddr"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &DecodeAddrRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -297,7 +297,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.AddrReceives"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AddrReceivesRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -322,7 +322,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.VerifyProof"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ProofFile{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -347,7 +347,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.DecodeProof"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &DecodeProofRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -372,7 +372,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.ExportProof"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ExportProofRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -397,7 +397,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.UnpackProofFile"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &UnpackProofFileRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -422,7 +422,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.SendAsset"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &SendAssetRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -447,7 +447,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.BurnAsset"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &BurnAssetRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -472,7 +472,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.ListBurns"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ListBurnsRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -497,7 +497,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.GetInfo"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &GetInfoRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -522,7 +522,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.BakeMacaroon"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &BakeMacaroonRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -547,7 +547,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.FetchAssetMeta"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &FetchAssetMetaRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -572,7 +572,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.SubscribeReceiveEvents"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &SubscribeReceiveEventsRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -614,7 +614,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.SubscribeSendEvents"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &SubscribeSendEventsRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -656,7 +656,7 @@ func RegisterTaprootAssetsJSONCallbacks(registry map[string]func(ctx context.Con
 	}
 
 	registry["taprpc.TaprootAssets.RegisterTransfer"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &RegisterTransferRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)

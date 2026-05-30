@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
+	"runtime"
 
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btclog/v2"
@@ -260,13 +261,28 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 		federationStore, defaultClock,
 	)
 
-	proofFileStore, err := proof.NewFileArchiver(cfg.networkDir)
-	if err != nil {
-		return nil, fmt.Errorf("unable to open disk archive: %w", err)
+	localProofStore := proof.Archiver(assetStore)
+	var localProofWriter tapfreighter.VerifiedProofImporter
+	proofBackends := []proof.Archiver{assetStore}
+	if runtime.GOOS == "js" && runtime.GOARCH == "wasm" {
+		memoryProofStore := proof.NewMockProofArchive()
+		localProofStore = memoryProofStore
+		localProofWriter = memoryProofStore
+		proofBackends = append(proofBackends, memoryProofStore)
+	} else {
+		proofFileStore, err := proof.NewFileArchiver(cfg.networkDir)
+		if err != nil {
+			return nil, fmt.Errorf("unable to open disk archive: %w",
+				err)
+		}
+
+		localProofStore = proofFileStore
+		localProofWriter = proofFileStore
+		proofBackends = append(proofBackends, proofFileStore)
 	}
 	proofArchive := proof.NewMultiArchiver(
 		&proof.BaseVerifier{}, tapdb.DefaultStoreTimeout,
-		assetStore, proofFileStore,
+		proofBackends...,
 	)
 
 	federationMembers := cfg.Universe.FederationServers
@@ -684,7 +700,7 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 	// possible proof file sources to ensure it can always fetch input
 	// proofs.
 	porterProofReader := proof.NewMultiArchiveNotifier(
-		assetStore, multiverse, proofFileStore,
+		assetStore, multiverse, proofArchive,
 	)
 	chainPorter := tapfreighter.NewChainPorter(
 		&tapfreighter.ChainPorterConfig{
@@ -698,7 +714,7 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 			KeyRing:                keyRing,
 			AssetWallet:            assetWallet,
 			ProofReader:            porterProofReader,
-			ProofWriter:            proofFileStore,
+			ProofWriter:            localProofWriter,
 			ProofCourierDispatcher: proofCourierDispatcher,
 			ProofWatcher:           reOrgWatcher,
 			IgnoreChecker:          ignoreCheckerOpt,
@@ -811,7 +827,7 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 				GenSigner:             virtualTxSigner,
 				GenTxBuilder:          &tapscript.GroupTxBuilder{},
 				TxValidator:           &tap.ValidatorV0{},
-				ProofFiles:            proofFileStore,
+				ProofFiles:            localProofStore,
 				Universe:              universeFederation,
 				ProofWatcher:          reOrgWatcher,
 				UniversePushBatchSize: defaultUniverseSyncBatchSize,

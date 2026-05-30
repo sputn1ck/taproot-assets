@@ -12,7 +12,7 @@ import (
 )
 
 func RegisterPortfolioPilotJSONCallbacks(registry map[string]func(ctx context.Context,
-	conn *grpc.ClientConn, reqJSON string, callback func(string, error))) {
+	conn grpc.ClientConnInterface, reqJSON string, callback func(string, error))) {
 
 	marshaler := &gateway.JSONPb{
 		MarshalOptions: protojson.MarshalOptions{
@@ -22,7 +22,7 @@ func RegisterPortfolioPilotJSONCallbacks(registry map[string]func(ctx context.Co
 	}
 
 	registry["portfoliopilotrpc.PortfolioPilot.ResolveRequest"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ResolveRequestRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -47,7 +47,7 @@ func RegisterPortfolioPilotJSONCallbacks(registry map[string]func(ctx context.Co
 	}
 
 	registry["portfoliopilotrpc.PortfolioPilot.VerifyAcceptQuote"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &VerifyAcceptQuoteRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -72,7 +72,7 @@ func RegisterPortfolioPilotJSONCallbacks(registry map[string]func(ctx context.Co
 	}
 
 	registry["portfoliopilotrpc.PortfolioPilot.QueryAssetRates"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &QueryAssetRatesRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)

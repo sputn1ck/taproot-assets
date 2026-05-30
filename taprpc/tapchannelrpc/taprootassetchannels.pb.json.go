@@ -12,7 +12,7 @@ import (
 )
 
 func RegisterTaprootAssetChannelsJSONCallbacks(registry map[string]func(ctx context.Context,
-	conn *grpc.ClientConn, reqJSON string, callback func(string, error))) {
+	conn grpc.ClientConnInterface, reqJSON string, callback func(string, error))) {
 
 	marshaler := &gateway.JSONPb{
 		MarshalOptions: protojson.MarshalOptions{
@@ -22,7 +22,7 @@ func RegisterTaprootAssetChannelsJSONCallbacks(registry map[string]func(ctx cont
 	}
 
 	registry["tapchannelrpc.TaprootAssetChannels.FundChannel"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &FundChannelRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -47,7 +47,7 @@ func RegisterTaprootAssetChannelsJSONCallbacks(registry map[string]func(ctx cont
 	}
 
 	registry["tapchannelrpc.TaprootAssetChannels.EncodeCustomRecords"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &EncodeCustomRecordsRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -72,7 +72,7 @@ func RegisterTaprootAssetChannelsJSONCallbacks(registry map[string]func(ctx cont
 	}
 
 	registry["tapchannelrpc.TaprootAssetChannels.SendPayment"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &SendPaymentRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -114,7 +114,7 @@ func RegisterTaprootAssetChannelsJSONCallbacks(registry map[string]func(ctx cont
 	}
 
 	registry["tapchannelrpc.TaprootAssetChannels.AddInvoice"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AddInvoiceRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -139,7 +139,7 @@ func RegisterTaprootAssetChannelsJSONCallbacks(registry map[string]func(ctx cont
 	}
 
 	registry["tapchannelrpc.TaprootAssetChannels.DecodeAssetPayReq"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AssetPayReq{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)

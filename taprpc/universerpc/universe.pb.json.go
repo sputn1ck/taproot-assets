@@ -12,7 +12,7 @@ import (
 )
 
 func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
-	conn *grpc.ClientConn, reqJSON string, callback func(string, error))) {
+	conn grpc.ClientConnInterface, reqJSON string, callback func(string, error))) {
 
 	marshaler := &gateway.JSONPb{
 		MarshalOptions: protojson.MarshalOptions{
@@ -22,7 +22,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.MultiverseRoot"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &MultiverseRootRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -47,7 +47,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.AssetRoots"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AssetRootRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -72,7 +72,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.QueryAssetRoots"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AssetRootQuery{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -97,7 +97,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.DeleteAssetRoot"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &DeleteRootQuery{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -122,7 +122,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.DeleteAssetLeaf"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &DeleteAssetLeafRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -147,7 +147,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.AssetLeafKeys"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AssetLeafKeysRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -172,7 +172,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.AssetLeaves"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AssetLeavesRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -197,7 +197,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.QueryProof"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &UniverseKey{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -222,7 +222,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.InsertProof"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AssetProof{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -247,7 +247,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.PushProof"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &PushProofRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -272,7 +272,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.Info"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &InfoRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -297,7 +297,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.SyncUniverse"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &SyncRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -322,7 +322,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.ListFederationServers"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ListFederationServersRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -347,7 +347,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.AddFederationServer"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AddFederationServerRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -372,7 +372,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.DeleteFederationServer"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &DeleteFederationServerRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -397,7 +397,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.UniverseStats"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &StatsRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -422,7 +422,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.QueryAssetStats"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AssetStatsQuery{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -447,7 +447,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.QueryEvents"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &QueryEventsRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -472,7 +472,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.SetFederationSyncConfig"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &SetFederationSyncConfigRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -497,7 +497,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.QueryFederationSyncConfig"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &QueryFederationSyncConfigRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -522,7 +522,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.IgnoreAssetOutPoint"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &IgnoreAssetOutPointRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -547,7 +547,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.UpdateSupplyCommit"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &UpdateSupplyCommitRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -572,7 +572,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.FetchSupplyCommit"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &FetchSupplyCommitRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -597,7 +597,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.FetchSupplyLeaves"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &FetchSupplyLeavesRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -622,7 +622,7 @@ func RegisterUniverseJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["universerpc.Universe.InsertSupplyCommit"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &InsertSupplyCommitRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)

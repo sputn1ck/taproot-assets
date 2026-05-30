@@ -12,7 +12,7 @@ import (
 )
 
 func RegisterRfqJSONCallbacks(registry map[string]func(ctx context.Context,
-	conn *grpc.ClientConn, reqJSON string, callback func(string, error))) {
+	conn grpc.ClientConnInterface, reqJSON string, callback func(string, error))) {
 
 	marshaler := &gateway.JSONPb{
 		MarshalOptions: protojson.MarshalOptions{
@@ -22,7 +22,7 @@ func RegisterRfqJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["rfqrpc.Rfq.AddAssetBuyOrder"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AddAssetBuyOrderRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -47,7 +47,7 @@ func RegisterRfqJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["rfqrpc.Rfq.AddAssetSellOrder"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AddAssetSellOrderRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -72,7 +72,7 @@ func RegisterRfqJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["rfqrpc.Rfq.AddAssetSellOffer"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AddAssetSellOfferRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -97,7 +97,7 @@ func RegisterRfqJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["rfqrpc.Rfq.AddAssetBuyOffer"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &AddAssetBuyOfferRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -122,7 +122,7 @@ func RegisterRfqJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["rfqrpc.Rfq.QueryPeerAcceptedQuotes"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &QueryPeerAcceptedQuotesRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -147,7 +147,7 @@ func RegisterRfqJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["rfqrpc.Rfq.SubscribeRfqEventNtfns"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &SubscribeRfqEventNtfnsRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
@@ -189,7 +189,7 @@ func RegisterRfqJSONCallbacks(registry map[string]func(ctx context.Context,
 	}
 
 	registry["rfqrpc.Rfq.ForwardingHistory"] = func(ctx context.Context,
-		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+		conn grpc.ClientConnInterface, reqJSON string, callback func(string, error)) {
 
 		req := &ForwardingHistoryRequest{}
 		err := marshaler.Unmarshal([]byte(reqJSON), req)
